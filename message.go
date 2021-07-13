@@ -132,7 +132,7 @@ func newServerMessage(reader io.Reader) (*message, error) {
 	}
 
 	if m.messageType == Connect {
-		bytes, err := ioutil.ReadAll(io.LimitReader(buf, 100))
+		bytes, err := ioutil.ReadAll(buf)
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +144,7 @@ func newServerMessage(reader io.Reader) (*message, error) {
 		m.address = parts[1]
 		m.bytes = bytes
 	} else if m.messageType == AddClient || m.messageType == RemoveClient {
-		bytes, err := ioutil.ReadAll(io.LimitReader(buf, 100))
+		bytes, err := ioutil.ReadAll(buf)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func (m *message) Err() error {
 	if m.err != nil {
 		return m.err
 	}
-	bytes, err := ioutil.ReadAll(io.LimitReader(m.body, 100))
+	bytes, err := ioutil.ReadAll(m.body)
 	if err != nil {
 		return err
 	}
