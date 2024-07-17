@@ -49,13 +49,20 @@ type Context struct {
 	Session *Session
 }
 
-func New(auth Authorizer, errorWriter ErrorWriter) *Server {
-	return &Server{
+func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server {
+	s := &Server{
 		peers:       map[string]peer{},
 		authorizer:  auth,
 		errorWriter: errorWriter,
 		sessions:    newSessionManager(),
+		middleFunc:  make([]MiddleFunc, 0),
 	}
+	s.middleFunc = append(s.middleFunc, funcs...)
+	return s
+}
+
+func (s *Server) WithMiddleFuncs(funcs ...MiddleFunc) {
+	s.middleFunc = append(s.middleFunc, funcs...)
 }
 
 func (s *Server) WithAuthorizer(next HandlerFunc) HandlerFunc {
