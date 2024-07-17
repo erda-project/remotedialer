@@ -57,7 +57,7 @@ func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server 
 		sessions:    newSessionManager(),
 		middleFunc:  make([]MiddleFunc, 0),
 	}
-	s.WithMiddleFuncs(append([]MiddleFunc{s.WithAuthorizer}, funcs...)...)
+	s.WithMiddleFuncs(append([]MiddleFunc{s.authorizerMiddleFunc}, funcs...)...)
 	return s
 }
 
@@ -65,7 +65,7 @@ func (s *Server) WithMiddleFuncs(funcs ...MiddleFunc) {
 	s.middleFunc = append(s.middleFunc, funcs...)
 }
 
-func (s *Server) WithAuthorizer(next HandlerFunc) HandlerFunc {
+func (s *Server) authorizerMiddleFunc(next HandlerFunc) HandlerFunc {
 	return func(ctx *Context) {
 		clientKey, authed, peer, proxy, err := s.auth(ctx.Req)
 		if err != nil {
