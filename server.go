@@ -57,7 +57,7 @@ func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server 
 		sessions:    newSessionManager(),
 		middleFunc:  make([]MiddleFunc, 0),
 	}
-	s.middleFunc = append(s.middleFunc, funcs...)
+	s.WithMiddleFuncs(append([]MiddleFunc{s.WithAuthorizer}, funcs...)...)
 	return s
 }
 
