@@ -127,8 +127,9 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	for _, f := range s.middleFunc {
-		handle = f(handle)
+	// Execute the middleFunc in the order it was added
+	for i := len(s.middleFunc) - 1; i >= 0; i-- {
+		handle = s.middleFunc[i](handle)
 	}
 
 	ctx := &Context{
