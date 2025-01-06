@@ -37,6 +37,7 @@ type Server struct {
 	ClientConnectAuthorizer ConnectAuthorizer
 	authorizer              Authorizer
 	middleFunc              []MiddleFunc
+	middleFuncLock          sync.Mutex
 	errorWriter             ErrorWriter
 	sessions                *sessionManager
 	peers                   map[string]peer
@@ -57,11 +58,19 @@ func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server 
 		sessions:    newSessionManager(),
 		middleFunc:  make([]MiddleFunc, 0),
 	}
-	s.WithMiddleFuncs(append([]MiddleFunc{s.authorizerMiddleFunc}, funcs...)...)
+	s.initMiddleFuncs()
 	return s
 }
 
+func (s *Server) initMiddleFuncs(funcs ...MiddleFunc) {
+	s.middleFuncLock.Lock()
+	defer s.middleFuncLock.Unlock()
+	s.middleFunc = append([]MiddleFunc{s.authorizerMiddleFunc}, funcs...)
+}
+
 func (s *Server) WithMiddleFuncs(funcs ...MiddleFunc) {
+	s.middleFuncLock.Lock()
+	defer s.middleFuncLock.Unlock()
 	s.middleFunc = append(s.middleFunc, funcs...)
 }
 
@@ -131,6 +140,8 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	for i := len(s.middleFunc) - 1; i >= 0; i-- {
 		handle = s.middleFunc[i](handle)
 	}
+
+	s.initMiddleFuncs()
 
 	ctx := &Context{
 		RW:  rw,
