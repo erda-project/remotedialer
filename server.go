@@ -3,7 +3,6 @@ package remotedialer
 import (
 	"context"
 	"fmt"
-	cmap "github.com/orcaman/concurrent-map/v2"
 	"net"
 	"net/http"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
