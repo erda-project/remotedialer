@@ -3,6 +3,7 @@ package remotedialer
 import (
 	"context"
 	"fmt"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"net"
 	"net/http"
 	"strings"
@@ -18,6 +19,9 @@ var (
 	errFailedAuth       = errors.New("failed authentication")
 	errWrongMessageType = errors.New("wrong websocket message type")
 )
+
+const DefaultMiddleFuncKey = "Default"
+const HeaderClusterKey = "X-Erda-Cluster-Key"
 
 type Authorizer func(req *http.Request) (clientKey string, authed bool, err error)
 type ErrorWriter func(rw http.ResponseWriter, req *http.Request, code int, err error)
@@ -36,8 +40,7 @@ type Server struct {
 	PeerToken               string
 	ClientConnectAuthorizer ConnectAuthorizer
 	authorizer              Authorizer
-	middleFunc              []MiddleFunc
-	middleFuncLock          sync.Mutex
+	middleFunc              cmap.ConcurrentMap[string, []MiddleFunc]
 	errorWriter             ErrorWriter
 	sessions                *sessionManager
 	peers                   map[string]peer
@@ -56,22 +59,20 @@ func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server 
 		authorizer:  auth,
 		errorWriter: errorWriter,
 		sessions:    newSessionManager(),
-		middleFunc:  make([]MiddleFunc, 0),
+		middleFunc:  cmap.New[[]MiddleFunc](),
 	}
-	s.initMiddleFuncs()
+	s.middleFunc.Set(DefaultMiddleFuncKey, []MiddleFunc{s.authorizerMiddleFunc})
 	return s
 }
 
-func (s *Server) initMiddleFuncs(funcs ...MiddleFunc) {
-	s.middleFuncLock.Lock()
-	defer s.middleFuncLock.Unlock()
-	s.middleFunc = append([]MiddleFunc{s.authorizerMiddleFunc}, funcs...)
-}
-
-func (s *Server) WithMiddleFuncs(funcs ...MiddleFunc) {
-	s.middleFuncLock.Lock()
-	defer s.middleFuncLock.Unlock()
-	s.middleFunc = append(s.middleFunc, funcs...)
+func (s *Server) WithMiddleFuncs(req *http.Request, funcs ...MiddleFunc) {
+	clusterKey := req.Header.Get(HeaderClusterKey)
+	middleFuncs, ok := s.middleFunc.Get(clusterKey)
+	if !ok || middleFuncs == nil {
+		middleFuncs = make([]MiddleFunc, 0)
+	}
+	middleFuncs = append(middleFuncs, s.authorizerMiddleFunc)
+	s.middleFunc.Set(clusterKey, middleFuncs)
 }
 
 func (s *Server) authorizerMiddleFunc(next HandlerFunc) HandlerFunc {
@@ -123,6 +124,17 @@ func (s *Server) authorizerMiddleFunc(next HandlerFunc) HandlerFunc {
 }
 
 func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	middleFuncs := make([]MiddleFunc, 0, 1)
+	clusterKey := req.Header.Get(HeaderClusterKey)
+
+	if funcs, ok := s.middleFunc.Get(DefaultMiddleFuncKey); ok && funcs != nil {
+		middleFuncs = append(middleFuncs, funcs...)
+	}
+
+	if funcs, ok := s.middleFunc.Get(clusterKey); ok && funcs != nil {
+		middleFuncs = append(middleFuncs, funcs...)
+		s.middleFunc.Remove(clusterKey)
+	}
 
 	handle := func(ctx *Context) {
 		if ctx.Session == nil {
@@ -137,11 +149,9 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Execute the middleFunc in the order it was added
-	for i := len(s.middleFunc) - 1; i >= 0; i-- {
-		handle = s.middleFunc[i](handle)
+	for i := len(middleFuncs) - 1; i >= 0; i-- {
+		handle = middleFuncs[i](handle)
 	}
-
-	s.initMiddleFuncs()
 
 	ctx := &Context{
 		RW:  rw,
