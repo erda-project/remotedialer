@@ -40,7 +40,7 @@ type Server struct {
 	PeerToken               string
 	ClientConnectAuthorizer ConnectAuthorizer
 	authorizer              Authorizer
-	middleFunc              cmap.ConcurrentMap[string, []MiddleFunc]
+	middleFunc              *cmap.ConcurrentMap[string, []MiddleFunc]
 	errorWriter             ErrorWriter
 	sessions                *sessionManager
 	peers                   map[string]peer
@@ -54,12 +54,13 @@ type Context struct {
 }
 
 func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server {
+	middleFunc := cmap.New[[]MiddleFunc]()
 	s := &Server{
 		peers:       map[string]peer{},
 		authorizer:  auth,
 		errorWriter: errorWriter,
 		sessions:    newSessionManager(),
-		middleFunc:  cmap.New[[]MiddleFunc](),
+		middleFunc:  &middleFunc,
 	}
 	s.middleFunc.Set(DefaultMiddleFuncKey, []MiddleFunc{s.authorizerMiddleFunc})
 	return s
@@ -71,7 +72,7 @@ func (s *Server) WithMiddleFuncs(req *http.Request, funcs ...MiddleFunc) {
 	if !ok || middleFuncs == nil {
 		middleFuncs = make([]MiddleFunc, 0)
 	}
-	middleFuncs = append(middleFuncs, s.authorizerMiddleFunc)
+	middleFuncs = append(middleFuncs, funcs...)
 	s.middleFunc.Set(clusterKey, middleFuncs)
 }
 
