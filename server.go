@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -18,6 +19,9 @@ var (
 	errFailedAuth       = errors.New("failed authentication")
 	errWrongMessageType = errors.New("wrong websocket message type")
 )
+
+const DefaultMiddleFuncKey = "Default"
+const HeaderClusterKey = "X-Erda-Cluster-Key"
 
 type Authorizer func(req *http.Request) (clientKey string, authed bool, err error)
 type ErrorWriter func(rw http.ResponseWriter, req *http.Request, code int, err error)
@@ -36,7 +40,7 @@ type Server struct {
 	PeerToken               string
 	ClientConnectAuthorizer ConnectAuthorizer
 	authorizer              Authorizer
-	middleFunc              []MiddleFunc
+	middleFunc              *cmap.ConcurrentMap[string, []MiddleFunc]
 	errorWriter             ErrorWriter
 	sessions                *sessionManager
 	peers                   map[string]peer
@@ -50,19 +54,26 @@ type Context struct {
 }
 
 func New(auth Authorizer, errorWriter ErrorWriter, funcs ...MiddleFunc) *Server {
+	middleFunc := cmap.New[[]MiddleFunc]()
 	s := &Server{
 		peers:       map[string]peer{},
 		authorizer:  auth,
 		errorWriter: errorWriter,
 		sessions:    newSessionManager(),
-		middleFunc:  make([]MiddleFunc, 0),
+		middleFunc:  &middleFunc,
 	}
-	s.WithMiddleFuncs(append([]MiddleFunc{s.authorizerMiddleFunc}, funcs...)...)
+	s.middleFunc.Set(DefaultMiddleFuncKey, []MiddleFunc{s.authorizerMiddleFunc})
 	return s
 }
 
-func (s *Server) WithMiddleFuncs(funcs ...MiddleFunc) {
-	s.middleFunc = append(s.middleFunc, funcs...)
+func (s *Server) WithMiddleFuncs(req *http.Request, funcs ...MiddleFunc) {
+	clusterKey := req.Header.Get(HeaderClusterKey)
+	middleFuncs, ok := s.middleFunc.Get(clusterKey)
+	if !ok || middleFuncs == nil {
+		middleFuncs = make([]MiddleFunc, 0)
+	}
+	middleFuncs = append(middleFuncs, funcs...)
+	s.middleFunc.Set(clusterKey, middleFuncs)
 }
 
 func (s *Server) authorizerMiddleFunc(next HandlerFunc) HandlerFunc {
@@ -114,6 +125,17 @@ func (s *Server) authorizerMiddleFunc(next HandlerFunc) HandlerFunc {
 }
 
 func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	middleFuncs := make([]MiddleFunc, 0, 1)
+	clusterKey := req.Header.Get(HeaderClusterKey)
+
+	if funcs, ok := s.middleFunc.Get(DefaultMiddleFuncKey); ok && funcs != nil {
+		middleFuncs = append(middleFuncs, funcs...)
+	}
+
+	if funcs, ok := s.middleFunc.Get(clusterKey); ok && funcs != nil {
+		middleFuncs = append(middleFuncs, funcs...)
+		s.middleFunc.Remove(clusterKey)
+	}
 
 	handle := func(ctx *Context) {
 		if ctx.Session == nil {
@@ -128,8 +150,8 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Execute the middleFunc in the order it was added
-	for i := len(s.middleFunc) - 1; i >= 0; i-- {
-		handle = s.middleFunc[i](handle)
+	for i := len(middleFuncs) - 1; i >= 0; i-- {
+		handle = middleFuncs[i](handle)
 	}
 
 	ctx := &Context{
